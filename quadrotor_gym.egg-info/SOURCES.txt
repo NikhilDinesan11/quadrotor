@@ -1,0 +1,15 @@
+MANIFEST.in
+setup.py
+quadrotor_gym/__init__.py
+quadrotor_gym.egg-info/PKG-INFO
+quadrotor_gym.egg-info/SOURCES.txt
+quadrotor_gym.egg-info/dependency_links.txt
+quadrotor_gym.egg-info/requires.txt
+quadrotor_gym.egg-info/top_level.txt
+quadrotor_gym/assets/quadrotor.urdf
+quadrotor_gym/controllers/__init__.py
+quadrotor_gym/controllers/pid_controller.py
+quadrotor_gym/environments/__init__.py
+quadrotor_gym/environments/quadrotor_env.py
+quadrotor_gym/utils/__init__.py
+quadrotor_gym/utils/visualization.py

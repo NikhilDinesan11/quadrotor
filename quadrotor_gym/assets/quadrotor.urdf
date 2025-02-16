@@ -1,0 +1,109 @@
+<?xml version="1.0"?>
+<robot name="quadrotor">
+    <link name="base_link">
+        <inertial>
+            <mass value="1.0"/>
+            <origin xyz="0 0 0" rpy="0 0 0"/>
+            <inertia ixx="0.01" ixy="0" ixz="0" iyy="0.01" iyz="0" izz="0.02"/>
+        </inertial>
+        <visual>
+            <origin xyz="0 0 0" rpy="0 0 0"/>
+            <geometry>
+                <box size="0.2 0.2 0.05"/>
+            </geometry>
+            <material name="blue">
+                <color rgba="0 0 1 1"/>
+            </material>
+        </visual>
+        <collision>
+            <origin xyz="0 0 0" rpy="0 0 0"/>
+            <geometry>
+                <box size="0.2 0.2 0.05"/>
+            </geometry>
+        </collision>
+    </link>
+
+    <!-- Four rotors with inertial properties -->
+    <link name="rotor1">
+        <inertial>
+            <mass value="0.1"/>
+            <origin xyz="0 0 0" rpy="0 0 0"/>
+            <inertia ixx="0.001" ixy="0" ixz="0" iyy="0.001" iyz="0" izz="0.001"/>
+        </inertial>
+        <visual>
+            <geometry>
+                <cylinder radius="0.1" length="0.01"/>
+            </geometry>
+            <material name="red">
+                <color rgba="1 0 0 1"/>
+            </material>
+        </visual>
+    </link>
+
+    <link name="rotor2">
+        <inertial>
+            <mass value="0.1"/>
+            <origin xyz="0 0 0" rpy="0 0 0"/>
+            <inertia ixx="0.001" ixy="0" ixz="0" iyy="0.001" iyz="0" izz="0.001"/>
+        </inertial>
+        <visual>
+            <geometry>
+                <cylinder radius="0.1" length="0.01"/>
+            </geometry>
+            <material name="red"/>
+        </visual>
+    </link>
+
+    <link name="rotor3">
+        <inertial>
+            <mass value="0.1"/>
+            <origin xyz="0 0 0" rpy="0 0 0"/>
+            <inertia ixx="0.001" ixy="0" ixz="0" iyy="0.001" iyz="0" izz="0.001"/>
+        </inertial>
+        <visual>
+            <geometry>
+                <cylinder radius="0.1" length="0.01"/>
+            </geometry>
+            <material name="red"/>
+        </visual>
+    </link>
+
+    <link name="rotor4">
+        <inertial>
+            <mass value="0.1"/>
+            <origin xyz="0 0 0" rpy="0 0 0"/>
+            <inertia ixx="0.001" ixy="0" ixz="0" iyy="0.001" iyz="0" izz="0.001"/>
+        </inertial>
+        <visual>
+            <geometry>
+                <cylinder radius="0.1" length="0.01"/>
+            </geometry>
+            <material name="red"/>
+        </visual>
+    </link>
+
+    <!-- Joints to connect rotors to base -->
+    <joint name="rotor1_joint" type="fixed">
+        <parent link="base_link"/>
+        <child link="rotor1"/>
+        <origin xyz="0.1 0.1 0.02"/>
+    </joint>
+
+    <joint name="rotor2_joint" type="fixed">
+        <parent link="base_link"/>
+        <child link="rotor2"/>
+        <origin xyz="-0.1 0.1 0.02"/>
+    </joint>
+
+    <joint name="rotor3_joint" type="fixed">
+        <parent link="base_link"/>
+        <child link="rotor3"/>
+        <origin xyz="-0.1 -0.1 0.02"/>
+    </joint>
+
+    <joint name="rotor4_joint" type="fixed">
+        <parent link="base_link"/>
+        <child link="rotor4"/>
+        <origin xyz="0.1 -0.1 0.02"/>
+    </joint>
+</robot>
