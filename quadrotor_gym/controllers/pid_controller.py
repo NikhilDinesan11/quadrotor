@@ -1,122 +1,206 @@
 import numpy as np
+import pybullet as p
 
 class PIDController:
     """
-    Improved PID controller for quadrotor control with better tuned gains.
-    Implements cascaded PID control structure.
+    Advanced PID controller for quadrotor control with dynamic compensation.
+    Implements a cascaded control structure: position -> attitude -> motor commands.
     """
     
     def __init__(self):
-        # Position control gains - Increased for better tracking
-        self.Kp_pos = np.array([3.0, 3.0, 6.0])  # Higher Z gain for altitude
-        self.Ki_pos = np.array([0.4, 0.4, 0.8])  # Integral gain to eliminate steady-state error
-        self.Kd_pos = np.array([2.0, 2.0, 3.0])  # Derivative for damping
+        # Physical parameters matching the environment
+        self.MASS = 0.027  # kg - must match environment
+        self.GRAVITY = 9.81
+        self.L = 0.039  # arm length in meters
+        self.KF = 3.16e-10  # thrust coefficient
+        self.KM = 7.94e-12  # moment coefficient
+        self.MAX_RPM = 44000
+        self.MIN_PWM = 20000
+        self.MAX_PWM = 65535
+        self.PWM2RPM_SCALE = 0.2685
+        self.PWM2RPM_CONST = 4070.3
         
-        # Attitude control gains - More aggressive for stability
-        self.Kp_att = np.array([6.0, 6.0, 4.0])  # Higher roll/pitch gains
-        self.Ki_att = np.array([0.3, 0.3, 0.2])
-        self.Kd_att = np.array([1.5, 1.5, 1.0])
+        # Position controller gains (outer loop)
+        # Tuned for good tracking while maintaining stability
+        self.Kp_pos = np.array([10.0, 10.0, 20.0])  # Higher Z gain for altitude
+        self.Ki_pos = np.array([2.0, 2.0, 5.0])     # Integral helps with steady-state
+        self.Kd_pos = np.array([7.0, 7.0, 10.0])    # Derivative for damping
         
-        # Initialize error integrals
+        # Attitude controller gains (inner loop)
+        # Higher gains for faster attitude response
+        self.Kp_att = np.array([20.0, 20.0, 10.0])  # Roll, Pitch, Yaw
+        self.Ki_att = np.array([0.0, 0.0, 0.0])     # Usually not needed for attitude
+        self.Kd_att = np.array([10.0, 10.0, 5.0])   # Damping for stability
+        
+        # Error integrals for position and attitude
         self.pos_integral = np.zeros(3)
         self.att_integral = np.zeros(3)
         
-        # Store previous errors for derivative term
+        # Previous errors for derivative computation
         self.prev_pos_error = np.zeros(3)
         self.prev_att_error = np.zeros(3)
         
         # Anti-windup limits
-        self.integral_limit = 1.0
+        self.pos_integral_limit = 2.0
+        self.att_integral_limit = 1.0
         
-        # Time step
-        self.dt = 0.01
-
+        # Time step matching environment
+        self.dt = 0.01  # 100Hz control
+        
+        # Previous motor commands for smoothing
+        self.prev_pwm = np.ones(4) * self.MIN_PWM
+        
+        # Mixing matrix for quadrotor in X configuration
+        # Maps desired thrust and torques to individual motor commands
+        self.mixing_matrix = np.array([
+            [1.0, 1.0, 1.0, 1.0],     # Total thrust
+            [1.0, -1.0, -1.0, 1.0],   # Roll torque
+            [1.0, 1.0, -1.0, -1.0],   # Pitch torque
+            [-1.0, 1.0, -1.0, 1.0]    # Yaw torque
+        ])
+        
     def reset(self):
-        """Reset controller state."""
+        """Reset controller state for new episode."""
         self.pos_integral = np.zeros(3)
         self.att_integral = np.zeros(3)
         self.prev_pos_error = np.zeros(3)
         self.prev_att_error = np.zeros(3)
+        self.prev_pwm = np.ones(4) * self.MIN_PWM
 
     def compute_control(self, state, target_pos, target_yaw=0.0):
         """
-        Compute control actions for the quadrotor.
+        Compute PWM commands for motors based on current state and target.
         
         Args:
-            state: Current state [x, y, z, roll, pitch, yaw, vx, vy, vz, wx, wy, wz]
-            target_pos: Target position [x, y, z]
-            target_yaw: Target yaw angle
+            state: [x, y, z, qw, qx, qy, qz, vx, vy, vz, wx, wy, wz]
+            target_pos: Desired position [x, y, z]
+            target_yaw: Desired yaw angle (radians)
+            
+        Returns:
+            numpy.array: PWM commands for each motor [pwm1, pwm2, pwm3, pwm4]
         """
-        # Extract current position and attitude
-        current_pos = state[:3]
-        current_att = state[3:6]
-        current_vel = state[6:9]
-        current_angular_vel = state[9:]
+        # Extract state components
+        pos = state[:3]
+        quat = state[3:7]
+        vel = state[7:10]
+        ang_vel = state[10:]
         
-        # Position control
-        pos_error = target_pos - current_pos
+        # Get rotation matrix and current euler angles
+        rot_mat = np.array(p.getMatrixFromQuaternion(quat)).reshape(3, 3)
+        euler = np.array(p.getEulerFromQuaternion(quat))
         
-        # Anti-windup for position integral
+        # Position control (outer loop)
+        pos_error = target_pos - pos
+        
+        # Update position integral with anti-windup
         self.pos_integral += pos_error * self.dt
-        self.pos_integral = np.clip(self.pos_integral, -self.integral_limit, self.integral_limit)
-        
-        pos_derivative = (pos_error - self.prev_pos_error) / self.dt
-        
-        # Add velocity damping
-        pos_derivative += -0.5 * current_vel
-        
-        # Compute desired acceleration
-        desired_acc = (
-            self.Kp_pos * pos_error +
-            self.Ki_pos * self.pos_integral +
-            self.Kd_pos * pos_derivative
+        self.pos_integral = np.clip(
+            self.pos_integral, 
+            -self.pos_integral_limit, 
+            self.pos_integral_limit
         )
         
-        # Add feed-forward gravity compensation
-        desired_acc[2] += 9.81
+        # Compute position derivative with velocity feedback
+        pos_derivative = (pos_error - self.prev_pos_error) / self.dt - vel
         
-        # Convert desired acceleration to desired attitude
-        thrust_magnitude = np.linalg.norm(desired_acc)
+        # Desired acceleration in world frame
+        acc_desired = (
+            self.Kp_pos * pos_error +
+            self.Ki_pos * self.pos_integral +
+            self.Kd_pos * pos_derivative +
+            np.array([0., 0., self.GRAVITY])  # Gravity compensation
+        )
         
-        # Prevent division by zero and limit maximum tilt
-        if thrust_magnitude > 0.01:
-            desired_roll = np.arcsin(np.clip(desired_acc[1] / thrust_magnitude, -0.5, 0.5))
-            desired_pitch = -np.arcsin(np.clip(desired_acc[0] / thrust_magnitude, -0.5, 0.5))
-        else:
-            desired_roll = 0
-            desired_pitch = 0
-            
-        desired_att = np.array([desired_roll, desired_pitch, target_yaw])
+        # Convert desired acceleration to thrust and attitude commands
+        thrust_magnitude = self.MASS * np.linalg.norm(acc_desired)
         
-        # Attitude control
-        att_error = desired_att - current_att
-        att_error[2] = (att_error[2] + np.pi) % (2 * np.pi) - np.pi  # Normalize yaw error
+        # Compute desired orientation
+        z_body_desired = acc_desired / np.linalg.norm(acc_desired)
+        x_body_desired = np.array([
+            np.cos(target_yaw),
+            np.sin(target_yaw),
+            0
+        ])
+        y_body_desired = np.cross(z_body_desired, x_body_desired)
+        y_body_desired = y_body_desired / np.linalg.norm(y_body_desired)
+        x_body_desired = np.cross(y_body_desired, z_body_desired)
         
-        # Anti-windup for attitude integral
+        rot_mat_desired = np.vstack([x_body_desired, y_body_desired, z_body_desired]).T
+        euler_desired = self._rot_mat_to_euler(rot_mat_desired)
+        
+        # Attitude control (inner loop)
+        att_error = self._wrap_angle(euler_desired - euler)
+        
+        # Update attitude integral with anti-windup
         self.att_integral += att_error * self.dt
-        self.att_integral = np.clip(self.att_integral, -self.integral_limit, self.integral_limit)
+        self.att_integral = np.clip(
+            self.att_integral,
+            -self.att_integral_limit,
+            self.att_integral_limit
+        )
         
-        att_derivative = (att_error - self.prev_att_error) / self.dt
+        # Compute attitude derivative with angular velocity feedback
+        att_derivative = (att_error - self.prev_att_error) / self.dt - ang_vel
         
-        # Add angular velocity damping
-        att_derivative += -0.5 * current_angular_vel
-        
-        # Compute torques
+        # Compute desired torques
         torques = (
             self.Kp_att * att_error +
             self.Ki_att * self.att_integral +
             self.Kd_att * att_derivative
         )
         
-        # Update previous errors
+        # Combine thrust and torques
+        thrust_torques = np.array([
+            thrust_magnitude,
+            torques[0] * self.L,
+            torques[1] * self.L,
+            torques[2]
+        ])
+        
+        # Convert to motor PWM commands
+        pwm = self._thrust_torques_to_pwm(thrust_torques)
+        
+        # Apply motor dynamics (smoothing)
+        alpha = 0.2  # Smoothing factor
+        pwm = alpha * pwm + (1 - alpha) * self.prev_pwm
+        
+        # Store values for next iteration
         self.prev_pos_error = pos_error
         self.prev_att_error = att_error
+        self.prev_pwm = pwm
         
-        # Normalize thrust to [-1, 1]
-        normalized_thrust = (thrust_magnitude - 9.81) / 20.0
-        normalized_thrust = np.clip(normalized_thrust, -1.0, 1.0)
+        return np.clip(pwm, self.MIN_PWM, self.MAX_PWM)
+    
+    def _thrust_torques_to_pwm(self, thrust_torques):
+        """Convert desired thrust and torques to PWM commands."""
+        # Convert thrust and torques to individual motor thrusts
+        motor_thrusts = np.linalg.pinv(self.mixing_matrix) @ thrust_torques
         
-        # Normalize torques to [-1, 1]
-        normalized_torques = np.clip(torques, -1.0, 1.0)
+        # Convert thrusts to RPM
+        rpms = np.sqrt(np.maximum(motor_thrusts / self.KF, 0))
         
-        return np.array([normalized_thrust, *normalized_torques])
+        # Convert RPM to PWM
+        return (rpms - self.PWM2RPM_CONST) / self.PWM2RPM_SCALE
+    
+    def _rot_mat_to_euler(self, R):
+        """Convert rotation matrix to euler angles (roll, pitch, yaw)."""
+        # Extract pitch angle (about y axis)
+        pitch = np.arcsin(-R[2, 0])
+        
+        # Check for gimbal lock
+        if abs(pitch - np.pi/2) < 1e-3:
+            roll = 0  # Roll is undefined, set to zero
+            yaw = np.arctan2(R[1, 2], R[0, 2])
+        elif abs(pitch + np.pi/2) < 1e-3:
+            roll = 0  # Roll is undefined, set to zero
+            yaw = -np.arctan2(R[1, 2], R[0, 2])
+        else:
+            # Extract roll (about x axis) and yaw (about z axis)
+            roll = np.arctan2(R[2, 1], R[2, 2])
+            yaw = np.arctan2(R[1, 0], R[0, 0])
+        
+        return np.array([roll, pitch, yaw])
+    
+    def _wrap_angle(self, angle):
+        """Wrap angle to [-pi, pi]."""
+        return np.mod(angle + np.pi, 2 * np.pi) - np.pi
